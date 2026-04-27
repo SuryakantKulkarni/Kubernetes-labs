@@ -17,7 +17,7 @@ The Nautilus DevOps team is diving into Kubernetes for application management. O
 
 ### Step 1: Create Full Manifest File using heredoc
 
-```bash
+```yaml
 cat > pod-httpd.yaml << 'EOF'
 apiVersion: v1
 kind: Pod
