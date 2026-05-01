@@ -1,0 +1,31 @@
+# 📘 Task 7: Deploy ReplicaSet in Kubernetes Cluster
+
+---
+
+## YAML/Config
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: nginx-replicaset
+  labels:
+    app: nginx_app
+    type: front-end
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: nginx_app
+  template:
+    metadata:
+      labels:
+        app: nginx_app
+        type: front-end
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+```
