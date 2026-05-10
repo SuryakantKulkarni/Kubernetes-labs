@@ -3,13 +3,15 @@
 ---
 
 ## 📚 Task Overview
-A junior DevOps team member encountered difficulties deploying a stack on the Kubernetes cluster. The pod fails to start, presenting errors. Let's troubleshoot and rectify the issue promptly. 
+The Nautilus DevOps team needs a time check pod created in a specific Kubernetes namespace for logging purposes. Initially, it's for testing, but it may be integrated into an existing cluster later. Here's what's required: 
 
-- There is a `pod` named `webserver`, and the `container` within it is named `httpd-container`, its utilizing the `httpd:latest` image. 
+-  Create a pod called `time-check` in the `xfusion` namespace. The pod should contain a container named `time-check`, utilizing the `busybox` image with the `latest` tag (specify as `busybox:latest`).
 
-- Additionally, there's a sidecar container named `sidecar-container` using the `ubuntu:latest` image. 
+-  Create a config map named `time-config` with the data `TIME_FREQ=2` in the same namespace.
 
-- Identify and address the issue to ensure the pod is in the running state and the application is accessible. 
+-  Configure the `time-check` container to execute the command: `while true; do date; sleep $TIME_FREQ;done`. Ensure the result is written `/opt/finance/time/time-check.log`. Also, add an environmental variable `TIME_FREQ` in the container, fetching its value from the config map TIME_FREQ` key.
+
+-  Create a volume `log-volume` and mount it at `/opt/finance/time` within the container.
 
 > Note: The `kubectl` utility on the `jump-host` has been configured to work with the Kubernetes cluster.
 
@@ -17,166 +19,161 @@ A junior DevOps team member encountered difficulties deploying a stack on the Ku
 
 ## ⚙️ Step-by-Step Implementation
 
-### Step 1: Check Pod Status
+### Step 1: Create Namespace
 
 ```bash
-kubectl get pods
+kubectl create namespace xfusion
 ````
 #### Explanation:
-The `kubectl get pods` command lists all Pods in the current namespace.
+The `kubectl create namespace` command is used to create a new namespace.
+- `xfusion` is the namespace where all resources will be created.
 
-It helps identify the current status of the Pod such as:
-* Running
-* CrashLoopBackOff
-* Error
-* Pending
-
-This is the first step in troubleshooting Kubernetes resources.
-
-### Step 2: Inspect Pod Details
-
-```bash
-kubectl describe pod webserver
-```
-#### Explanation:
-The `kubectl describe pod` command provides detailed information about the Pod.
-
-It displays:
-* Container status
-* Events
-* Restart counts
-* Image details
-* Error messages
-
-This command helps identify why the Pod is failing.
-
-### Step 3: Check Container Logs
-
-```bash
-kubectl logs webserver -c sidecar-container
-```
-#### Explanation:
-The `kubectl logs` command retrieves logs from a container.
-* `-c sidecar-container` specifies the container name inside the Pod.
-
-This helps diagnose issues related to container startup or command execution.
-
-### Step 4: Export Existing Pod YAML
-
-```bash
-kubectl get pod webserver -o yaml > webserver.yaml
-```
-#### Explanation:
-The `kubectl get pod` command retrieves the Pod definition.
-* `-o yaml` outputs the configuration in YAML format
-* `>` redirects the output into `webserver.yaml`
-
-This allows editing the configuration externally.
-
-### Step 5: Edit Pod Manifest Externally using heredoc
+### Step 2: Create ConfigMap using heredoc
 
 ```yaml
-cat > webserver.yaml << 'EOF'
+cat > time-config.yaml << 'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: time-config
+  namespace: xfusion
+data:
+  TIME_FREQ: "2"
+EOF
+```
+#### Explanation:
+This command creates a ConfigMap YAML file.
+* `TIME_FREQ: "2"` defines a key-value pair
+
+This value will be used inside the container as an environment variable
+
+### Step 3: Apply ConfigMap
+
+```bash
+kubectl apply -f time-config.yaml
+```
+#### Explanation:
+The `kubectl apply` command creates the ConfigMap in the cluster.
+* `-f` specifies the file
+
+### Step 4: Create Pod Manifest using heredoc
+
+```yaml
+cat > time-check-pod.yaml << 'EOF'
 apiVersion: v1
 kind: Pod
 metadata:
-  name: webserver
+  name: time-check
+  namespace: xfusion
 spec:
   containers:
-  - name: nginx-container
-    image: nginx:latest
-    ports:
-    - containerPort: 80
-
-  - name: sidecar-container
-    image: ubuntu:latest
-    command:
-    - /bin/bash
-    - -c
-    - while true; do sleep 3600; done
+  - name: time-check
+    image: busybox:latest
+    command: ["/bin/sh", "-c", "while true; do date; sleep $TIME_FREQ; done >> /opt/finance/time/time-check.log"]
+    env:
+    - name: TIME_FREQ
+      valueFrom:
+        configMapKeyRef:
+          name: time-config
+          key: TIME_FREQ
+    volumeMounts:
+    - name: log-volume
+      mountPath: /opt/finance/time
+  volumes:
+  - name: log-volume
+    emptyDir: {}
 EOF
 ```
-
 #### Explanation:
-The `cat > webserver.yaml << 'EOF'` command creates or overwrites the YAML manifest file.
-* `>` redirects content into the file
-* `<< 'EOF'` starts a heredoc block
+This YAML defines the Pod with required configurations:
+* `command` runs a loop to print date and sleep based on TIME_FREQ
+* Output is redirected to `/opt/finance/time/time-check.log`
+* `env` fetches value from ConfigMap
+* `volumeMounts` mounts storage inside container
+* `emptyDir` volume provides temporary storage
 
-The issue was caused because the sidecar container did not have a long-running process and exited immediately. The added command keeps the sidecar container running continuously.
-
-### Step 6: Delete Existing Faulty Pod
+### Step 5: Apply Pod Configuration
 
 ```bash
-kubectl delete pod webserver
+kubectl apply -f time-check-pod.yaml
 ```
 #### Explanation:
-The `kubectl delete pod` command removes the existing faulty Pod from the cluster. This is required because most Pod specifications cannot be modified directly after creation.
+This command creates the Pod inside the `xfusion` namespace.
 
-### Step 7: Recreate Fixed Pod
+### Step 6: Verify Pod in Namespace
 
 ```bash
-kubectl apply -f webserver.yaml
+kubectl get pods -n xfusion
 ```
 #### Explanation:
-The `kubectl apply` command creates the Pod using the corrected YAML file.
-* `-f` specifies the manifest file
+The `-n xfusion` flag ensures we check resources inside the correct namespace.
 
-The new Pod will start with the corrected sidecar configuration.
-
-### Step 8: Verify Pod Status
+### Step 7: Check Logs File inside Pod
 
 ```bash
-kubectl get pods
+kubectl exec -it time-check -n xfusion -- cat /opt/finance/time/time-check.log
 ```
 #### Explanation:
-This command verifies whether the Pod is now in the `Running` state. Both containers should be healthy and operational.
-
-### Step 9: Verify Application Accessibility
-
-```bash
-kubectl exec -it webserver -c nginx-container -- curl localhost
-```
-#### Explanation:
-The `kubectl exec` command executes commands inside a container.
+The `kubectl exec` command runs commands inside the container.
 * `-it` enables interactive mode
-* `-c nginx-container` specifies the nginx container
-* `curl localhost` checks whether the nginx application is accessible internally
+* `--` separates kubectl arguments from the command
+* `cat` reads the log file generated inside the Pod
 
 ---
 
 ## YAML/Config
 
+### ConfigMap
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: time-config
+  namespace: xfusion
+data:
+  TIME_FREQ: "2"
+```
+
+### Pod
+
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: webserver
+  name: time-check
+  namespace: xfusion
 spec:
   containers:
-  - name: nginx-container
-    image: nginx:latest
-    ports:
-    - containerPort: 80
-
-  - name: sidecar-container
-    image: ubuntu:latest
-    command:
-    - /bin/bash
-    - -c
-    - while true; do sleep 3600; done
+  - name: time-check
+    image: busybox:latest
+    command: ["/bin/sh", "-c", "while true; do date; sleep $TIME_FREQ; done >> /opt/finance/time/time-check.log"]
+    env:
+    - name: TIME_FREQ
+      valueFrom:
+        configMapKeyRef:
+          name: time-config
+          key: TIME_FREQ
+    volumeMounts:
+    - name: log-volume
+      mountPath: /opt/finance/time
+  volumes:
+  - name: log-volume
+    emptyDir: {}
 ```
 
 ---
 
 ## ⚠️ Challenges Faced / Troubleshooting
-* Sidecar container exited immediately after startup
-* Pod remained in error state because one container was failing
-* Initially checked only Pod status without inspecting logs
-* Existing Pod needed to be deleted before applying corrected configuration
+* Forgot to create namespace before applying resources
+* Incorrect ConfigMap reference caused environment variable not to load
+* Command syntax issues inside YAML (especially shell loop)
+* Log file path not created due to missing volume mount
 
 ## 🧠 Key Learnings
-* Multi-container Pods require troubleshooting each container separately
-* Sidecar containers must run a valid long-running process
-* `kubectl describe` and logs are essential troubleshooting tools
-* Pod manifests can be edited externally using YAML files
-* Faulty Pods often need to be recreated after configuration changes
+* ConfigMaps are used to pass configuration data into containers
+* Environment variables can be injected from ConfigMaps
+* Volumes allow data persistence inside containers
+* `emptyDir` provides temporary storage for Pods
+* `kubectl exec` helps debug and verify container behavior
+* Combining ConfigMap + Volume + Command is a real-world use case
